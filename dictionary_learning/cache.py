@@ -337,7 +337,7 @@ class PairedActivationCache:
     def __getitem__(self, index: int):
         return th.stack(
             (self.activation_cache_1[index], self.activation_cache_2[index]), dim=0
-        )
+        ) # (2, batch_size, d_submodule)
 
     @property
     def tokens(self):
