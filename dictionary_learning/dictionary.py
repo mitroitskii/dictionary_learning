@@ -169,12 +169,15 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
-        self.decoder_bias = nn.Parameter(th.empty(activation_dim, device=device))
-        self.encoder = nn.Linear(activation_dim, dict_size, bias=False, device=device)
+        self.decoder_bias = nn.Parameter(
+            th.empty(activation_dim, device=device))
+        self.encoder = nn.Linear(
+            activation_dim, dict_size, bias=False, device=device)
         self.r_mag = nn.Parameter(th.empty(dict_size, device=device))
         self.gate_bias = nn.Parameter(th.empty(dict_size, device=device))
         self.mag_bias = nn.Parameter(th.empty(dict_size, device=device))
-        self.decoder = nn.Linear(dict_size, activation_dim, bias=False, device=device)
+        self.decoder = nn.Linear(
+            dict_size, activation_dim, bias=False, device=device)
         if initialization == "default":
             self._reset_parameters()
         else:
@@ -261,9 +264,11 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
-        self.W_enc = nn.Parameter(th.empty(activation_dim, dict_size, device=device))
+        self.W_enc = nn.Parameter(
+            th.empty(activation_dim, dict_size, device=device))
         self.b_enc = nn.Parameter(th.zeros(dict_size, device=device))
-        self.W_dec = nn.Parameter(th.empty(dict_size, activation_dim, device=device))
+        self.W_dec = nn.Parameter(
+            th.empty(dict_size, activation_dim, device=device))
         self.b_dec = nn.Parameter(th.zeros(activation_dim, device=device))
         self.threshold = nn.Parameter(th.zeros(dict_size, device=device))
 
@@ -336,7 +341,8 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
                 cfg_dict["finetuning_scaling_factor"] == False
             ), "Finetuning scaling factor not supported"
             dict_size, activation_dim = cfg_dict["d_sae"], cfg_dict["d_in"]
-            autoencoder = JumpReluAutoEncoder(activation_dim, dict_size, device=device)
+            autoencoder = JumpReluAutoEncoder(
+                activation_dim, dict_size, device=device)
             autoencoder.load_state_dict(sae.state_dict())
             autoencoder.apply_b_dec_to_input = cfg_dict["apply_b_dec_to_input"]
 
@@ -360,9 +366,9 @@ class AutoEncoderNew(Dictionary, nn.Module):
 
         # initialize encoder and decoder weights
         w = th.randn(activation_dim, dict_size)
-        ## normalize columns of w
+        # normalize columns of w
         w = w / w.norm(dim=0, keepdim=True) * 0.1
-        ## set encoder and decoder weights
+        # set encoder and decoder weights
         self.encoder.weight = nn.Parameter(w.clone().T)
         self.decoder.weight = nn.Parameter(w.clone())
 
@@ -440,23 +446,27 @@ class CrossCoderEncoder(nn.Module):
                 th.empty(num_layers, activation_dim, dict_size)
             )
         if norm_init_scale is not None:
-            weight = weight / weight.norm(dim=1, keepdim=True) * norm_init_scale
+            weight = weight / \
+                weight.norm(dim=1, keepdim=True) * norm_init_scale
         self.weight = nn.Parameter(weight)
         self.bias = nn.Parameter(th.zeros(dict_size))
 
     def forward(
         self,
         x: th.Tensor,
-        return_no_sum: bool = False,
+        return_unsummed: bool = False,
         select_features: list[int] | None = None,
-    ) -> th.Tensor:  # (batch_size, activation_dim)
+    ) -> th.Tensor:
         """
         Convert activations to features for each layer
 
         Args:
             x: (batch_size, n_layers, activation_dim)
+            return_unsummed: if True, return the unsummed features
+            select_features: if not None, only use the features at the specified indices
         Returns:
             f: (batch_size, dict_size)
+            f_unsummed (if return_unsummed is True): (batch_size, n_layers, dict_size)
         """
         x = x[:, self.encoder_layers]
         if select_features is not None:
@@ -465,11 +475,13 @@ class CrossCoderEncoder(nn.Module):
         else:
             w = self.weight
             bias = self.bias
-        f = th.einsum("bld, ldf -> blf", x, w)
-        if not return_no_sum:
-            return relu(f.sum(dim=1) + bias)
-        else:
+        f = th.einsum(
+            "bld,ldf->blf", x, w)
+
+        if return_unsummed:
             return relu(f.sum(dim=1) + bias), relu(f + bias)
+        else:
+            return relu(f.sum(dim=1) + bias)
 
 
 class CrossCoderDecoder(nn.Module):
@@ -495,14 +507,16 @@ class CrossCoderDecoder(nn.Module):
             self.weight = nn.Parameter(init_with_weight)
         else:
             if same_init_for_all_layers:
-                weight = init.kaiming_uniform_(th.empty(dict_size, activation_dim))
+                weight = init.kaiming_uniform_(
+                    th.empty(dict_size, activation_dim))
                 weight = weight.repeat(num_layers, 1, 1)
             else:
                 weight = init.kaiming_uniform_(
                     th.empty(num_layers, dict_size, activation_dim)
                 )
             if norm_init_scale is not None:
-                weight = weight / weight.norm(dim=2, keepdim=True) * norm_init_scale
+                weight = weight / \
+                    weight.norm(dim=2, keepdim=True) * norm_init_scale
             self.weight = nn.Parameter(weight)
 
     def forward(
@@ -510,8 +524,7 @@ class CrossCoderDecoder(nn.Module):
         f: th.Tensor,
         select_features: list[int] | None = None,
         add_bias: bool = True,
-    ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
-        # f: (batch_size, n_layers, dict_size)
+    ) -> th.Tensor:
         """
         Convert features to activations for each layer
 
@@ -524,7 +537,8 @@ class CrossCoderDecoder(nn.Module):
             w = self.weight[:, select_features]
         else:
             w = self.weight
-        x = th.einsum("bf, lfd -> bld", f, w)
+        x = th.einsum(
+            "bf,lfd->bld", f, w)
         if add_bias:
             x += self.bias
         return x
@@ -609,19 +623,26 @@ class CrossCoder(Dictionary, nn.Module):
     def decode(
         self, f: th.Tensor, **kwargs
     ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
-        # f: (batch_size, n_layers, dict_size)
+        # f: (batch_size, dict_size)
         return self.decoder(f, **kwargs)
 
     def forward(self, x: th.Tensor, output_features=False):
         """
         Forward pass of the cross-coder.
-        x : activations to be encoded and decoded
-        output_features : if True, return the encoded features as well as the decoded x
+        Args:
+            x : activations to be encoded and decoded
+                shape: (batch_size, n_layers, activation_dim)
+            output_features : if True, return the encoded features as well as the decoded x
+        Returns:
+            x_hat : decoded activations
+                shape: (batch_size, n_layers, activation_dim)
+            f_scaled (if output_features is True) : encoded features scaled by the decoder column norms
+                shape: (batch_size, dict_size)
         """
-        f = self.encode(x)
+        f = self.encode(x)  # (batch_size, dict_size)
         if self.latent_processor is not None:
             f = self.latent_processor(f)
-        x_hat = self.decode(f)
+        x_hat = self.decode(f)  # (batch_size, n_layers, activation_dim)
 
         if output_features:
             # Scale features by decoder column norms
@@ -652,7 +673,8 @@ class CrossCoder(Dictionary, nn.Module):
             warn(
                 "Cross-coder state dict was saved while torch.compiled was enabled. Fixing..."
             )
-            state_dict = {k.split("_orig_mod.")[1]: v for k, v in state_dict.items()}
+            state_dict = {k.split("_orig_mod.")[
+                1]: v for k, v in state_dict.items()}
         num_layers, activation_dim, dict_size = state_dict["encoder.weight"].shape
         cross_coder = cls(activation_dim, dict_size, num_layers)
         cross_coder.load_state_dict(state_dict)
@@ -665,14 +687,17 @@ class CrossCoder(Dictionary, nn.Module):
         # https://transformer-circuits.pub/2023/monosemantic-features/index.html#appendix-autoencoder-resampling
         # compute loss for each activation
         losses = (
-            (activations - self.forward(activations)).norm(dim=-1).mean(dim=-1).square()
+            (activations - self.forward(activations)
+             ).norm(dim=-1).mean(dim=-1).square()
         )
 
         # sample input to create encoder/decoder weights from
         n_resample = min([deads.sum(), losses.shape[0]])
         print("Resampling", n_resample, "neurons")
-        indices = th.multinomial(losses, num_samples=n_resample, replacement=False)
-        sampled_vecs = activations[indices]  # (n_resample, num_layers, activation_dim)
+        indices = th.multinomial(
+            losses, num_samples=n_resample, replacement=False)
+        # (n_resample, num_layers, activation_dim)
+        sampled_vecs = activations[indices]
 
         # get norm of the living neurons
         # encoder.weight: (num_layers, activation_dim, dict_size)
