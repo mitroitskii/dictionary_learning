@@ -7,13 +7,10 @@ import os
 from collections import defaultdict
 import torch as t
 from tqdm import tqdm
-
 import wandb
 
-from .dictionary import AutoEncoder
-from .evaluation import evaluate
-from .trainers.standard import StandardTrainer
 from .trainers.crosscoder import CrossCoderTrainer
+from .utils import ExitHandler
 
 
 def get_stats(
@@ -54,12 +51,14 @@ def get_stats(
         residual_variance_per_layer = []
 
         for l in range(act_hat.shape[1]):
-            total_variance_per_layer.append(t.var(act[:, l, :], dim=0).cpu().sum())
+            total_variance_per_layer.append(
+                t.var(act[:, l, :], dim=0).cpu().sum())
             residual_variance_per_layer.append(
                 t.var(act[:, l, :] - act_hat[:, l, :], dim=0).cpu().sum()
             )
             out[f"cl{l}_frac_variance_explained"] = (
-                1 - residual_variance_per_layer[l] / total_variance_per_layer[l]
+                1 - residual_variance_per_layer[l] /
+                total_variance_per_layer[l]
             )
         total_variance = sum(total_variance_per_layer)
         residual_variance = sum(residual_variance_per_layer)
@@ -111,7 +110,7 @@ def run_validation(
     deads = []
     if isinstance(trainer, CrossCoderTrainer):
         frac_variance_explained_per_layer = defaultdict(list)
-    for val_step, act in enumerate(tqdm(validation_data, total=len(validation_data))):
+    for val_step, act in enumerate(tqdm(validation_data, total=len(validation_data), desc="Validating")):
         act = act.to(trainer.device)
         stats = get_stats(trainer, act, deads_sum=False)
         l0.append(stats["l0"])
@@ -137,7 +136,8 @@ def run_validation(
     if len(l0) > 0:
         log["val/l0"] = t.tensor(l0).mean().item()
     if len(frac_variance_explained) > 0:
-        log["val/frac_variance_explained"] = t.tensor(frac_variance_explained).mean()
+        log["val/frac_variance_explained"] = t.tensor(
+            frac_variance_explained).mean()
     if len(frac_variance_explained_per_feature) > 0:
         frac_variance_explained_per_feature = t.stack(
             frac_variance_explained_per_feature
@@ -193,6 +193,7 @@ def trainSAE(
     trainer = trainer_class(**trainer_config)
 
     wandb_config = trainer.config | run_cfg
+
     wandb.init(
         entity=wandb_entity,
         project=wandb_project,
@@ -213,17 +214,33 @@ def trainSAE(
         with open(os.path.join(save_dir, "config.json"), "w") as f:
             json.dump(config, f, indent=4)
 
-    for step, act in enumerate(tqdm(data, total=steps)):
+    # Setup save function for graceful exit
+    def save_model_on_exit():
+        if save_dir is not None:
+            save_model(trainer, "model_interrupted.pt", save_dir)
+
+    # Initialize signal handler
+    exit_handler = ExitHandler(save_function=save_model_on_exit)
+
+    for step, act in enumerate(tqdm(data, total=steps, desc="Training")):
+        # Check if we need to exit due to interrupt
+        if exit_handler.should_exit():
+            exit_handler.save_and_exit()
+
         if steps is not None and step >= steps:
             break
+
         act = act.to(trainer.device)
+
         # logging
         if log_steps is not None and step % log_steps == 0 and step != 0:
-            log_stats(trainer, step, act, activations_split_by_head, transcoder)
+            log_stats(trainer, step, act,
+                      activations_split_by_head, transcoder)
 
         # saving
-        if save_steps is not None and step % save_steps == 0:
+        if save_steps is not None and step > 0 and step % save_steps == 0:
             print(f"Saving at step {step}")
+            print()
             if save_dir is not None:
                 save_model(trainer, f"checkpoint_{step}.pt", save_dir)
 
@@ -236,6 +253,7 @@ def trainSAE(
             and (start_of_training_eval or step > 0)
         ):
             print(f"Validating at step {step}")
+            print()
             logs = run_validation(trainer, validation_data, step=step)
             try:
                 os.makedirs(save_dir, exist_ok=True)
@@ -249,13 +267,15 @@ def trainSAE(
         last_eval_logs = run_validation(trainer, validation_data, step=step)
         if save_last_eval:
             os.makedirs(save_dir, exist_ok=True)
-            t.save(last_eval_logs, os.path.join(save_dir, f"last_eval_logs.pt"))
+            t.save(last_eval_logs, os.path.join(
+                save_dir, "last_eval_logs.pt"))
     except Exception as e:
         print(f"Error during final validation: {str(e)}")
+        print()
 
     # save final SAE
     if save_dir is not None:
-        save_model(trainer, f"model_final.pt", save_dir)
+        save_model(trainer, "model_final.pt", save_dir)
 
     if use_wandb:
         wandb.finish()
