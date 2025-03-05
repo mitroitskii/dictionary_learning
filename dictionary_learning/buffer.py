@@ -1,61 +1,114 @@
-import torch as t
-from nnsight import LanguageModel
-import gc
-from tqdm import tqdm
-
 from .config import DEBUG
+from tqdm import tqdm
+import gc
+from nnsight import LanguageModel
+import torch as t
+import sys
+import os
 
 if DEBUG:
     tracer_kwargs = {"scan": True, "validate": True}
 else:
     tracer_kwargs = {"scan": False, "validate": False}
 
-
 class ActivationBuffer:
     """
-    Implements a buffer of activations. The buffer stores activations from a model,
-    yields them in batches, and refreshes them when the buffer is less than half full.
+    Implements a buffer of activations. The buffer stores activations from one or more models,
+    stacks them if multiple models are provided, yields them in batches, and refreshes
+    when the buffer is less than half full.
+
+    Args:
+        data: generator which yields text data
+        models: Single LanguageModel or list of LanguageModels from which to extract activations
+        submodules: Single nn.Module or list of submodules corresponding to models
+        d_submodule: submodule dimension; if None, try to detect automatically
+        io: can be 'in' or 'out'; whether to extract input or output activations
+        n_ctxs: approximate number of contexts to store in the buffer
+        ctx_len: length of each context
+        refresh_batch_size: size of batches in which to process the data when adding to buffer
+        out_batch_size: size of batches in which to yield activations
+        out_dtype: dtype of the activations to yield
+        device: device on which to store the activations
     """
 
     def __init__(
         self,
-        data,  # generator which yields text data
-        model: LanguageModel,  # LanguageModel from which to extract activations
-        submodule,  # submodule of the model from which to extract activations
-        d_submodule=None,  # submodule dimension; if None, try to detect automatically
-        io="out",  # can be 'in' or 'out'; whether to extract input or output activations
-        n_ctxs=3e4,  # approximate number of contexts to store in the buffer
-        ctx_len=128,  # length of each context
-        refresh_batch_size=512,  # size of batches in which to process the data when adding to buffer
-        out_batch_size=8192,  # size of batches in which to yield activations
-        device="cpu",  # device on which to store the activations
+        data,
+        models,
+        submodules,
+        d_submodule=None,
+        io="out",
+        n_ctxs=3e4,
+        ctx_len=128,
+        refresh_batch_size=512,
+        out_batch_size=8192,
+        out_dtype=t.float32,
+        device="cpu",
     ):
-
         if io not in ["in", "out"]:
             raise ValueError("io must be either 'in' or 'out'")
+
+        # Convert single model/submodule to lists for uniform handling
+        # FIXME better handling would be to always use a list even for a single model - need to change the training scripts for this
+        self.models = [models] if not isinstance(models, list) else models
+        self.submodules = [submodules] if not isinstance(
+            submodules, list) else submodules
+
+        if len(self.models) != len(self.submodules):
+            raise ValueError("Number of models and submodules must match")
+
+        # Check that all submodules have the same dimension
+        d_submodules = []
+        for i, submodule in enumerate(self.submodules):
+            try:
+                if io == "in":
+                    d_submodules.append(submodule.in_features)
+                else:
+                    d_submodules.append(submodule.out_features)
+            except AttributeError:
+                # Skip if we can't determine dimension yet
+                continue
+
+        # If we have at least two dimensions to compare
+        if len(d_submodules) >= 2:
+            for i in range(1, len(d_submodules)):
+                if d_submodules[i] != d_submodules[0]:
+                    raise ValueError(
+                        f"Submodule dimensions must match. Found {d_submodules[0]} and {d_submodules[i]}"
+                    )
 
         if d_submodule is None:
             try:
                 if io == "in":
-                    d_submodule = submodule.in_features
+                    d_submodule = self.submodules[0].in_features
                 else:
-                    d_submodule = submodule.out_features
-            except:
+                    d_submodule = self.submodules[0].out_features
+            except AttributeError as exc:
                 raise ValueError(
                     "d_submodule cannot be inferred and must be specified directly"
-                )
-        self.activations = t.empty(0, d_submodule, device=device)
+                ) from exc
+
+        self.n_models = len(self.models)
+
+        # Initialize activations tensor with appropriate shape based on number of models
+        if self.n_models == 1:
+            self.activations = t.empty(
+                0, d_submodule, device=device, dtype=models[0].dtype)
+        else:
+            self.activations = t.empty(
+                # (batch_size, n_models, d_submodule)
+                0, self.n_models, d_submodule, device=device, dtype=models[0].dtype)
+
         self.read = t.zeros(0).bool()
 
         self.data = data
-        self.model = model
-        self.submodule = submodule
         self.d_submodule = d_submodule
         self.io = io
         self.n_ctxs = n_ctxs
         self.ctx_len = ctx_len
         self.activation_buffer_size = n_ctxs * ctx_len
         self.refresh_batch_size = refresh_batch_size
+        self.out_dtype = out_dtype
         self.out_batch_size = out_batch_size
         self.device = device
 
@@ -64,9 +117,10 @@ class ActivationBuffer:
 
     def __next__(self):
         """
-        Return a batch of activations
+        Return a batch of activations (stacked if multiple models)
         """
         with t.no_grad():
+
             # if buffer is less than half full, refresh
             if (~self.read).sum() < self.activation_buffer_size // 2:
                 self.refresh()
@@ -74,10 +128,11 @@ class ActivationBuffer:
             # return a batch
             unreads = (~self.read).nonzero().squeeze()
             idxs = unreads[
-                t.randperm(len(unreads), device=unreads.device)[: self.out_batch_size]
+                t.randperm(len(unreads), device=unreads.device)[
+                    : self.out_batch_size]
             ]
             self.read[idxs] = True
-            return self.activations[idxs]
+            return self.activations[idxs].to(dtype=self.out_dtype)
 
     def text_batch(self, batch_size=None):
         """
@@ -90,12 +145,12 @@ class ActivationBuffer:
         except StopIteration:
             raise StopIteration("End of data stream reached")
 
-    def tokenized_batch(self, batch_size=None):
+    def tokenized_batch(self, model_idx=0, batch_size=None):
         """
-        Return a batch of tokenized inputs.
+        Return a batch of tokenized inputs using the tokenizer of the specified model.
         """
         texts = self.text_batch(batch_size=batch_size)
-        return self.model.tokenizer(
+        return self.models[model_idx].tokenizer(
             texts,
             return_tensors="pt",
             max_length=self.ctx_len,
@@ -103,57 +158,108 @@ class ActivationBuffer:
             truncation=True,
         )
 
+    def get_activations_from_model(self, model_idx, texts):
+        """
+        Get activations from a specific model for the given text batch
+        """
+        model = self.models[model_idx]
+        submodule = self.submodules[model_idx]
+
+        with t.no_grad():
+            with model.trace(
+                texts,
+                **tracer_kwargs,
+                invoker_args={"truncation": True, "max_length": self.ctx_len},
+            ):
+                if self.io == "in":
+                    hidden_states = submodule.inputs[0].save()
+                else:
+                    hidden_states = submodule.output.save()
+                input = model.inputs.save()
+
+                submodule.output.stop()
+
+        attn_mask = input.value[1]["attention_mask"]
+        hidden_states = hidden_states.value
+        if isinstance(hidden_states, tuple):
+            hidden_states = hidden_states[0]
+        hidden_states = hidden_states[attn_mask != 0]
+
+        return hidden_states
+
     def refresh(self):
         gc.collect()
         t.cuda.empty_cache()
+
         self.activations = self.activations[~self.read]
 
         current_idx = len(self.activations)
-        new_activations = t.empty(
-            self.activation_buffer_size, self.d_submodule, device=self.device
-        )
 
-        new_activations[: len(self.activations)] = self.activations
+        if self.n_models == 1:
+            new_activations = t.empty(
+                self.activation_buffer_size, self.d_submodule, device=self.device, dtype=self.models[
+                    0].dtype
+            )
+
+        else:
+            new_activations = t.empty(
+                self.activation_buffer_size, self.n_models, self.d_submodule, device=self.device, dtype=self.models[
+                    0].dtype
+            )
+        new_activations[:current_idx] = self.activations
+
         self.activations = new_activations
 
         # Optional progress bar when filling buffer. At larger models / buffer sizes (e.g. gemma-2-2b, 1M tokens on a 4090) this can take a couple minutes.
-        # pbar = tqdm(total=self.activation_buffer_size, initial=current_idx, desc="Refreshing activations")
+        pbar = tqdm(total=self.activation_buffer_size,
+                    initial=current_idx, desc="Refreshing activations")
 
         while current_idx < self.activation_buffer_size:
-            with t.no_grad():
-                with self.model.trace(
-                    self.text_batch(),
-                    **tracer_kwargs,
-                    invoker_args={"truncation": True, "max_length": self.ctx_len},
-                ):
-                    if self.io == "in":
-                        hidden_states = self.submodule.input[0].save()
-                    else:
-                        hidden_states = self.submodule.output.save()
-                    input = self.model.input.save()
-            attn_mask = input.value[1]["attention_mask"]
-            hidden_states = hidden_states.value
-            if isinstance(hidden_states, tuple):
-                hidden_states = hidden_states[0]
-            hidden_states = hidden_states[attn_mask != 0]
+            text_batch = self.text_batch()
+
+            if self.n_models == 1:
+                # Single model case - process as before
+                hidden_states = self.get_activations_from_model(0, text_batch).to(self.device)
+            else:
+                # Multiple models case - get and stack activations from all models
+                all_hidden_states = []
+                min_length = float('inf')
+
+                # Get activations from each model
+                for model_idx in range(self.n_models):
+                    model_hidden_states = self.get_activations_from_model(
+                        model_idx, text_batch).to(self.device)
+                    # Move to common device immediately to avoid cross-device operations
+                    all_hidden_states.append(model_hidden_states)
+                    min_length = min(min_length, len(model_hidden_states))
+
+                # FIXME this is an adhoc fix - to ensure that all hidden states are the same length, use the same tokenizer for all models
+                # Trim to shortest length (in case tokenizers behave differently)
+                for i, hidden_states in enumerate(all_hidden_states):
+                    all_hidden_states[i] = hidden_states[:min_length]
+
+                # Stack activations along model dimension
+                hidden_states = t.stack(all_hidden_states, dim=1).to(self.device)
 
             remaining_space = self.activation_buffer_size - current_idx
             assert remaining_space > 0
             hidden_states = hidden_states[:remaining_space]
 
-            self.activations[current_idx : current_idx + len(hidden_states)] = (
+            self.activations[current_idx: current_idx + len(hidden_states)] = (
                 hidden_states.to(self.device)
             )
             current_idx += len(hidden_states)
 
-            # pbar.update(len(hidden_states))
+            pbar.update(len(hidden_states))
 
-        # pbar.close()
-        self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
+        pbar.close()
+        self.read = t.zeros(len(self.activations),
+                            dtype=t.bool, device=self.device)
 
     @property
     def config(self):
         return {
+            "n_models": self.n_models,
             "d_submodule": self.d_submodule,
             "io": self.io,
             "n_ctxs": self.n_ctxs,
@@ -170,6 +276,7 @@ class ActivationBuffer:
         self.text_stream.close()
 
 
+# TODO: adopt for more than one model
 class HeadActivationBuffer:
     """
     This is specifically designed for training SAEs for individual attn heads in Llama3.
@@ -185,7 +292,8 @@ class HeadActivationBuffer:
         layer,  # submodule of the model from which to extract activations
         n_ctxs=3e4,  # approximate number of contexts to store in the buffer
         ctx_len=128,  # length of each context
-        refresh_batch_size=512,  # size of batches in which to process the data when adding to buffer
+        # size of batches in which to process the data when adding to buffer
+        refresh_batch_size=512,
         out_batch_size=8192,  # size of batches in which to yield activations
         device="cpu",  # device on which to store the activations
         apply_W_O=False,
@@ -226,7 +334,8 @@ class HeadActivationBuffer:
             # return a batch
             unreads = (~self.read).nonzero().squeeze()
             idxs = unreads[
-                t.randperm(len(unreads), device=unreads.device)[: self.out_batch_size]
+                t.randperm(len(unreads), device=unreads.device)[
+                    : self.out_batch_size]
             ]
             self.read[idxs] = True
             return self.activations[idxs]
@@ -263,7 +372,8 @@ class HeadActivationBuffer:
                 with self.model.trace(
                     self.text_batch(),
                     **tracer_kwargs,
-                    invoker_args={"truncation": True, "max_length": self.ctx_len},
+                    invoker_args={"truncation": True,
+                                  "max_length": self.ctx_len},
                     remote=self.remote,
                 ):
                     input = self.model.input.save()
@@ -310,7 +420,8 @@ class HeadActivationBuffer:
             self.activations = t.cat(
                 [self.activations, hidden_states.to(self.device)], dim=0
             )
-            self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
+            self.read = t.zeros(len(self.activations),
+                                dtype=t.bool, device=self.device)
 
     @property
     def config(self):
@@ -330,6 +441,7 @@ class HeadActivationBuffer:
         self.text_stream.close()
 
 
+# TODO: adopt for more than one model
 class NNsightActivationBuffer:
     """
     Implements a buffer of activations. The buffer stores activations from a model,
@@ -345,7 +457,8 @@ class NNsightActivationBuffer:
         io="out",  # can be 'in' or 'out'; whether to extract input or output activations, "in_and_out" for transcoders
         n_ctxs=3e4,  # approximate number of contexts to store in the buffer
         ctx_len=128,  # length of each context
-        refresh_batch_size=512,  # size of batches in which to process the data when adding to buffer
+        # size of batches in which to process the data when adding to buffer
+        refresh_batch_size=512,
         out_batch_size=8192,  # size of batches in which to yield activations
         device="cpu",  # device on which to store the activations
     ):
@@ -397,7 +510,8 @@ class NNsightActivationBuffer:
             # return a batch
             unreads = (~self.read).nonzero().squeeze()
             idxs = unreads[
-                t.randperm(len(unreads), device=unreads.device)[: self.out_batch_size]
+                t.randperm(len(unreads), device=unreads.device)[
+                    : self.out_batch_size]
             ]
             self.read[idxs] = True
             return self.activations[idxs]
@@ -474,11 +588,13 @@ class NNsightActivationBuffer:
                 hidden_states_out = self._reshaped_activations(
                     hidden_states_out
                 ).unsqueeze(1)
-                hidden_states = t.cat([hidden_states_in, hidden_states_out], dim=1)
+                hidden_states = t.cat(
+                    [hidden_states_in, hidden_states_out], dim=1)
             self.activations = t.cat(
                 [self.activations, hidden_states.to(self.device)], dim=0
             )
-            self.read = t.zeros(len(self.activations), dtype=t.bool, device=self.device)
+            self.read = t.zeros(len(self.activations),
+                                dtype=t.bool, device=self.device)
 
     @property
     def config(self):
