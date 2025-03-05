@@ -277,7 +277,7 @@ def trainSAE(
 
     # save final SAE
     if save_dir is not None:
-        save_model(trainer, "model_final.pt", save_dir)
+        save_model(trainer, "ae.pt", save_dir)
 
     if use_wandb:
         wandb.finish()
