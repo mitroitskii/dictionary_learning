@@ -18,23 +18,29 @@ class CrossCoderTrainer(SAETrainer):
 
     def __init__(
         self,
+        lm_name=None,
+        models_dtype="fp32",
+        dataset_name=None,
         dict_class=CrossCoder,
         num_layers=2,
+        layer=None,
         activation_dim=512,
         dict_size=64 * 512,
-        lr=1e-3,
+        batch_size=2048,
+        refresh_batch_size=2048,
+        ctx_len=1024,
+        max_tokens=100_000_000,
         l1_penalty=1e-1,
-        warmup_steps=1000,  # lr warmup period at start of training and after each resample
+        lr=1e-3,
         resample_steps=None,  # how often to resample neurons
+        warmup_steps=1000,  # lr warmup period at start of training and after each resample
         seed=None,
         device=None,
-        layer=None,
-        lm_name=None,
-        wandb_name="CrossCoderTrainer",
         submodule_name=None,
         compile=False,
         dict_class_kwargs={},
         pretrained_ae=None,
+        wandb_name="CrossCoderTrainer",
     ):
         super().__init__(seed)
 
@@ -42,6 +48,12 @@ class CrossCoderTrainer(SAETrainer):
         self.layer = layer
         self.lm_name = lm_name
         self.submodule_name = submodule_name
+        self.models_dtype = models_dtype
+        self.dataset_name = dataset_name
+        self.batch_size = batch_size
+        self.refresh_batch_size = refresh_batch_size
+        self.ctx_len = ctx_len
+        self.max_tokens = max_tokens
         self.compile = compile
         if seed is not None:
             th.manual_seed(seed)
@@ -102,18 +114,20 @@ class CrossCoderTrainer(SAETrainer):
             self.ae.resample_neurons(deads, activations)
             # reset Adam parameters for dead neurons
             state_dict = self.optimizer.state_dict()["state"]
-            ## encoder weight
+            # encoder weight
             state_dict[0]["exp_avg"][:, :, deads] = 0.0
             state_dict[0]["exp_avg_sq"][:, :, deads] = 0.0
-            ## encoder bias
+            # encoder bias
             state_dict[1]["exp_avg"][deads] = 0.0
             state_dict[1]["exp_avg_sq"][deads] = 0.0
-            ## decoder weight
+            # decoder weight
             state_dict[3]["exp_avg"][:, deads, :] = 0.0
             state_dict[3]["exp_avg_sq"][:, deads, :] = 0.0
 
     def loss(self, x, logging=False, return_deads=False, **kwargs):
+
         x_hat, f = self.ae(x, output_features=True)
+
         l2_loss = th.linalg.norm(x - x_hat, dim=-1).mean()
         l1_loss = f.norm(p=1, dim=-1).mean()
         deads = (f <= 1e-4).all(dim=0)
@@ -162,9 +176,15 @@ class CrossCoderTrainer(SAETrainer):
                 if not self.compile
                 else self.ae._orig_mod.__class__.__name__
             ),
+            "models_dtype": self.models_dtype,
+            "dataset_name": self.dataset_name,
             "trainer_class": self.__class__.__name__,
             "activation_dim": self.ae.activation_dim,
             "dict_size": self.ae.dict_size,
+            "batch_size": self.batch_size,
+            "refresh_batch_size": self.refresh_batch_size,
+            "ctx_len": self.ctx_len,
+            "max_tokens": self.max_tokens,
             "lr": self.lr,
             "l1_penalty": self.l1_penalty,
             "warmup_steps": self.warmup_steps,
