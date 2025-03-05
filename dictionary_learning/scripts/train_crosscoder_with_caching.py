@@ -8,6 +8,7 @@ Activations are assumed to be stored in the directory specified by `--activation
 import argparse
 import os
 import random
+import datetime
 from pathlib import Path
 import torch as th
 
@@ -203,5 +204,5 @@ if __name__ == "__main__":
         log_steps=50,
         steps=args.max_steps,
         save_steps=args.validate_every_n_steps,
-        save_dir=args.save_dir if not args.no_checkpoints else None,
+        save_dir=os.path.join(args.save_dir, f"L{args.layer}_mu{args.mu:.1e}_lr{args.lr:.0e}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}") if not args.no_checkpoints else None,
     )

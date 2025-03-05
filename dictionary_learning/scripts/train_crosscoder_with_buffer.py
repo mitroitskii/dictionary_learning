@@ -9,6 +9,7 @@ and configurable data types. There are two buffers, one for training and one for
 import argparse
 import random
 import os
+import datetime
 import torch as th
 from datasets import load_dataset
 from nnsight import LanguageModel
@@ -248,5 +249,5 @@ if __name__ == "__main__":
         log_steps=50,
         steps=max_steps,
         save_steps=args.save_every_n_steps,
-        save_dir=args.save_dir if not args.no_checkpoints else None,
+        save_dir=os.path.join(args.save_dir, f"L{args.layer}_mu{args.mu:.1e}_lr{args.lr:.0e}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}") if not args.no_checkpoints else None,
     )
