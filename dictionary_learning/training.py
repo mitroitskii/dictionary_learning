@@ -263,15 +263,17 @@ def trainSAE(
 
         if end_of_step_logging_fn is not None:
             end_of_step_logging_fn(trainer, step)
-    try:
-        last_eval_logs = run_validation(trainer, validation_data, step=step)
-        if save_last_eval:
-            os.makedirs(save_dir, exist_ok=True)
+    
+    if validation_data is not None:
+        try:
+            last_eval_logs = run_validation(trainer, validation_data, step=step)
+            if save_last_eval:
+                os.makedirs(save_dir, exist_ok=True)
             t.save(last_eval_logs, os.path.join(
                 save_dir, "last_eval_logs.pt"))
-    except Exception as e:
-        print(f"Error during final validation: {str(e)}")
-        print()
+        except Exception as e:
+            print(f"Error during final validation: {str(e)}")
+            print()
 
     # save final SAE
     if save_dir is not None:
