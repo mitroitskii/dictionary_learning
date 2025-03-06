@@ -167,3 +167,6 @@ nohup.out
 
 # Checkpoint files
 checkpoints/*
+
+# Evaluation results
+evaluations/*
