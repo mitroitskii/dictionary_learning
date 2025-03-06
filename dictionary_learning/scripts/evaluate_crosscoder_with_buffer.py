@@ -165,7 +165,7 @@ if __name__ == "__main__":
         return_loss_recovered=False, # NOTE: loss_recovered does not currently work with more than one model
     )
 
-    mu = config["trainer"]["mu"]
+    mu = config["trainer"]["l1_penalty"]
     lr = config["trainer"]["lr"]
 
     if args.evaluations_dir is not None:
