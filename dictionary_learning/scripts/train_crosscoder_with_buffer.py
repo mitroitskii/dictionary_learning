@@ -11,7 +11,6 @@ import random
 import os
 import datetime
 import torch as th
-from datasets import load_dataset
 from nnsight import LanguageModel
 
 from dictionary_learning.buffer import ActivationBuffer
@@ -21,7 +20,7 @@ from dictionary_learning.training import trainSAE
 from dictionary_learning.utils import hf_dataset_to_generator, get_submodule
 
 # Set high precision for float32 matrix multiplications to improve performance and numerical stability for GPUs with f32 tensor cores (does nothing otherwise)
-th.set_float32_matmul_precision('high') 
+th.set_float32_matmul_precision('high')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -69,6 +68,8 @@ if __name__ == "__main__":
                         help="HuggingFace dataset name")
     parser.add_argument("--dataset-path", type=str, default=None,
                         help="Local path to dataset. If provided, loads from local path instead of HuggingFace")
+    parser.add_argument("--dataset-split", type=str, default="train",
+                        help="Dataset split to use")
     parser.add_argument("--dataset-field", type=str, default="message_qwen1.5b",
                         help="Field name in the dataset to use (e.g., 'text', 'message_qwen1.5b')")
     parser.add_argument("--context-length", type=int, default=1024,
@@ -142,10 +143,10 @@ if __name__ == "__main__":
         print(
             f"Loading from local path: {args.dataset_path}")
         print()
-        generator = hf_dataset_to_generator(args.dataset_path, split="train", field=args.dataset_field)
+        generator = hf_dataset_to_generator(args.dataset_path, split=args.dataset_split, field=args.dataset_field)
     else:
         # Load from Hugging Face
-        generator = hf_dataset_to_generator(args.dataset_name, split="train", field=args.dataset_field)
+        generator = hf_dataset_to_generator(args.dataset_name, split=args.dataset_split, field=args.dataset_field)
 
     # Determine activation dimension
     if args.io == "out":
@@ -210,6 +211,7 @@ if __name__ == "__main__":
         "trainer": CrossCoderTrainer,
         "dict_class": CrossCoder,
         "layer": args.layer,
+        "io": args.io,
         "activation_dim": activation_dim,
         "dict_size": dictionary_size,
         "batch_size": args.batch_size,

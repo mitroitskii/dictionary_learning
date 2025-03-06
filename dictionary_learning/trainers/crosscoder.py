@@ -24,6 +24,7 @@ class CrossCoderTrainer(SAETrainer):
         dict_class=CrossCoder,
         num_layers=2,
         layer=None,
+        io=None,
         activation_dim=512,
         dict_size=64 * 512,
         batch_size=2048,
@@ -46,6 +47,7 @@ class CrossCoderTrainer(SAETrainer):
 
         assert layer is not None and lm_name is not None
         self.layer = layer
+        self.io = io
         self.lm_name = lm_name
         self.submodule_name = submodule_name
         self.models_dtype = models_dtype
@@ -191,6 +193,7 @@ class CrossCoderTrainer(SAETrainer):
             "resample_steps": self.resample_steps,
             "device": self.device,
             "layer": self.layer,
+            "io": self.io,
             "lm_name": self.lm_name,
             "wandb_name": self.wandb_name,
             "submodule_name": self.submodule_name,
