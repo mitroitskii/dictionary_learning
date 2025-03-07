@@ -2,8 +2,7 @@
 Train a Crosscoder using live activations from models.
 
 This script uses the ActivationBuffer to collect activations from two models in real-time
-and trains a CrossCoder on these paired activations, with proper train/validation split
-and configurable data types. There are two buffers, one for training and one for validation.
+and trains a CrossCoder on these paired activations.
 """
 
 import argparse

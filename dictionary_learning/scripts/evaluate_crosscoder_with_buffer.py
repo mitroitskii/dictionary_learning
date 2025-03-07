@@ -1,9 +1,5 @@
 """
-Train a Crosscoder using live activations from models.
-
-This script uses the ActivationBuffer to collect activations from two models in real-time
-and trains a CrossCoder on these paired activations, with proper train/validation split
-and configurable data types. There are two buffers, one for training and one for validation.
+Evaluate a trained Crosscoder using a buffer of activations from two models.
 """
 
 import argparse
@@ -94,6 +90,11 @@ if __name__ == "__main__":
     crosscoder, config = load_dictionary(
         args.crosscoder_path, args.crosscoder_device)
     
+    activation_dim = config["trainer"]["activation_dim"]
+    batch_size = config["trainer"]["batch_size"]
+    context_length = config["buffer"]["ctx_len"]
+    layer = config["trainer"]["layer"]
+    
     # Load models with specified dtype
     print(f"Loading models: {args.base_model} and {args.ft_model}")
     print()
@@ -102,10 +103,6 @@ if __name__ == "__main__":
     ft_model = LanguageModel(
         args.ft_model, device_map=args.model_devices[1], torch_dtype=model_dtype)
 
-    activation_dim = config["trainer"]["activation_dim"]
-    batch_size = config["trainer"]["batch_size"]
-    context_length = config["buffer"]["ctx_len"]
-    layer = config["trainer"]["layer"]
     
     base_submodule = get_submodule(base_model, layer)
     ft_submodule = get_submodule(ft_model, layer)
