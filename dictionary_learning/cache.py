@@ -184,7 +184,7 @@ class ActivationCache:
         model: LanguageModel,
         store_dir: str,
         batch_size: int = 64,
-        context_len: int = 128,
+        context_len: int | None = None,
         shard_size: int = 10**6,    
         d_model: int = 1024,
         shuffle_shards: bool = False,
