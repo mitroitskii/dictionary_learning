@@ -21,3 +21,7 @@ dependencies = [
     "nnsight",
     "einops",
 ]
+
+# Add this section to explicitly specify which packages to include
+[tool.setuptools]
+packages = ["dictionary_learning"]
