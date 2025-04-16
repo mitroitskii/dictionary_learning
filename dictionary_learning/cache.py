@@ -249,9 +249,12 @@ class ActivationCache:
                         last_submodule.output.stop()
 
                 for i in range(len(submodules)):
+                    value_tensor = activation_cache[i][-1].value
+                    # Move the mask to the same device as value_tensor
+                    mask = store_mask.reshape(-1).bool().to(value_tensor.device)
+                    
                     activation_cache[i][-1] = (
-                        activation_cache[i][-1]
-                        .value[store_mask.reshape(-1).bool()]
+                        value_tensor[mask]
                         .to(th.float32)
                         .cpu()
                     )  # remove padding tokens
