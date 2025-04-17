@@ -12,7 +12,7 @@ from torch.nn.functional import relu, elu
 import einops
 from warnings import warn
 from typing import Callable
-from enum import Enum, auto
+from enum import auto, StrEnum
 
 
 class Dictionary(ABC, nn.Module, PyTorchModelHubMixin):
@@ -532,7 +532,7 @@ class CrossCoderDecoder(nn.Module):
         return x
 
 
-class LossType(Enum):
+class LossType(StrEnum):
     """
     Enumeration of supported loss types for dictionary learning.
 
