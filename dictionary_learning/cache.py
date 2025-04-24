@@ -31,7 +31,8 @@ class ActivationShard:
         with open(self.shard_file.replace(".memmap", ".meta"), "r") as f:
             meta = json.load(f)
             self.shape = tuple(meta["shape"])
-            self.dtype = str_to_dtype(meta["dtype"]) if "dtype" in meta else th.float32
+            self.dtype = str_to_dtype(
+                meta["dtype"]) if "dtype" in meta else th.float32
             if self.dtype == th.bfloat16:
                 np_dtype = np.int16
             else:
@@ -64,7 +65,8 @@ def save_shard(activations, store_dir, shard_count, name, io):
     memmap[:] = activations
     memmap.flush()
     with open(memmap_file_meta, "w") as f:
-        json.dump({"shape": list(activations.shape), "dtype": dtype_to_str(dtype)}, f)
+        json.dump({"shape": list(activations.shape),
+                  "dtype": dtype_to_str(dtype)}, f)
     del memmap
     print(f"Finished storing activations for shard {shard_count}")
 
@@ -77,12 +79,14 @@ class ActivationCache:
 
     def __init__(self, store_dir: str):
         self.store_dir = store_dir
-        self.config = json.load(open(os.path.join(store_dir, "config.json"), "r"))
+        self.config = json.load(
+            open(os.path.join(store_dir, "config.json"), "r"))
         self.shards = [
             ActivationShard(store_dir, i)
             for i in range(self.config["shard_count"])
         ]
-        self._range_to_shard_idx = np.cumsum([0] + [s.shape[0] for s in self.shards])
+        self._range_to_shard_idx = np.cumsum(
+            [0] + [s.shape[0] for s in self.shards])
         if "store_tokens" in self.config and self.config["store_tokens"]:
             self._tokens = th.load(
                 os.path.join(store_dir, "tokens.pt"), weights_only=True
@@ -92,7 +96,8 @@ class ActivationCache:
         return self.config["total_size"]
 
     def __getitem__(self, index: int):
-        shard_idx = np.searchsorted(self._range_to_shard_idx, index, side="right") - 1
+        shard_idx = np.searchsorted(
+            self._range_to_shard_idx, index, side="right") - 1
         offset = index - self._range_to_shard_idx[shard_idx]
         shard = self.shards[shard_idx]
         return shard[offset]
@@ -112,7 +117,8 @@ class ActivationCache:
     def __init_multiprocessing(max_concurrent_saves: int = 3):
         if ActivationCache.__pool is None:
             ActivationCache.__manager = Manager()
-            ActivationCache.__active_processes = ActivationCache.__manager.Value("i", 0)
+            ActivationCache.__active_processes = ActivationCache.__manager.Value(
+                "i", 0)
             ActivationCache.__process_lock = ActivationCache.__manager.Lock()
             ActivationCache.__pool = Pool(processes=max_concurrent_saves)
 
@@ -220,7 +226,8 @@ class ActivationCache:
         assert (
             not shuffle_shards or not store_tokens
         ), "Shuffling shards and storing tokens is not supported yet"
-        dataloader = DataLoader(data, batch_size=batch_size, num_workers=num_workers)
+        dataloader = DataLoader(
+            data, batch_size=batch_size, num_workers=num_workers)
 
         activation_cache = [[] for _ in submodules]
         tokens_cache = []
@@ -252,7 +259,8 @@ class ActivationCache:
                 store_mask[:, :ignore_first_n_tokens_per_sample] = 0
             if store_tokens:
                 tokens_cache.append(
-                    tokens["input_ids"].reshape(-1)[store_mask.reshape(-1).bool()]
+                    tokens["input_ids"].reshape(
+                        -1)[store_mask.reshape(-1).bool()]
                 )
 
             shape = ActivationCache.shard_exists(store_dir, shard_count)
@@ -272,14 +280,23 @@ class ActivationCache:
                     if last_submodule is not None:
                         last_submodule.output.stop()
 
+
                 for i in range(len(submodules)):
+                    
+                    # Ensure the mask is on the same device as the activations before indexing
+                    target_device = activation_cache[i][-1].value.device
+                    store_mask_on_device = store_mask.to(target_device)
+                    
                     activation_cache[i][-1] = (
                         activation_cache[i][-1]
-                        .value[store_mask.reshape(-1).bool()]
+                        # Use the mask on the correct device
+                        .value[store_mask_on_device.reshape(-1).bool()]
                         .cpu()
+                    
                     )  # remove padding tokens
 
-                assert len(tokens_cache[-1]) == activation_cache[0][-1].shape[0]
+                assert len(tokens_cache[-1]
+                           ) == activation_cache[0][-1].shape[0]
                 assert activation_cache[0][-1].shape[0] == store_mask.sum().item()
                 current_size += activation_cache[0][-1].shape[0]
             else:
@@ -363,7 +380,8 @@ class PairedActivationCache:
 
     def __getitem__(self, index: int):
         return th.stack(
-            (self.activation_cache_1[index], self.activation_cache_2[index]), dim=0
+            (self.activation_cache_1[index],
+             self.activation_cache_2[index]), dim=0
         )
 
     @property
@@ -380,7 +398,8 @@ class ActivationCacheTuple:
         ]
         assert len(self.activation_caches) > 0
         for i in range(1, len(self.activation_caches)):
-            assert len(self.activation_caches[i]) == len(self.activation_caches[0])
+            assert len(self.activation_caches[i]) == len(
+                self.activation_caches[0])
 
     def __len__(self):
         return len(self.activation_caches[0])
