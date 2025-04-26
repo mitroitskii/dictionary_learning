@@ -15,7 +15,11 @@ from ..trainers.trainer import (
     set_decoder_norm_to_unit_norm,
     remove_gradient_parallel_to_decoder_directions,
 )
+from ..utils import dtype_to_str
 
+# TODO: add activation dtype and type conversion to other types of dicts
+# - modify dictionary.py to support activation dtype
+# - modify trainers
 
 class CrossCoderTrainer(SAETrainer):
     """
@@ -25,6 +29,7 @@ class CrossCoderTrainer(SAETrainer):
     def __init__(
         self,
         dict_class=CrossCoder,
+        activation_dtype = "float32",
         num_layers=2,
         activation_dim=512,
         dict_size=64 * 512,
@@ -55,10 +60,20 @@ class CrossCoderTrainer(SAETrainer):
             th.manual_seed(seed)
             th.cuda.manual_seed_all(seed)
 
+        # convert activation dtype to th.dtype
+        if activation_dtype.lower() == "float32":
+            activation_dtype = th.float32
+        elif activation_dtype.lower() == "float16":
+            activation_dtype = th.float16
+        elif activation_dtype.lower() == "bfloat16":
+            activation_dtype = th.bfloat16
+        else:
+            raise ValueError(f"Unsupported activation dtype: {activation_dtype}")
+
         # initialize dictionary
         if pretrained_ae is None:
             self.ae = dict_class(
-                activation_dim, dict_size, num_layers=num_layers, **dict_class_kwargs
+                activation_dtype, activation_dim, dict_size, num_layers=num_layers, **dict_class_kwargs
             )
         else:
             self.ae = pretrained_ae
@@ -176,6 +191,7 @@ class CrossCoderTrainer(SAETrainer):
                 else self.ae._orig_mod.__class__.__name__
             ),
             "trainer_class": self.__class__.__name__,
+            "activation_dtype": dtype_to_str(self.ae.activation_dtype),
             "activation_dim": self.ae.activation_dim,
             "dict_size": self.ae.dict_size,
             "lr": self.lr,
@@ -204,6 +220,7 @@ class BatchTopKCrossCoderTrainer(SAETrainer):
         layer: int,
         lm_name: str,
         num_layers: int = 2,
+        activation_dtype = "float32",
         dict_class: type = BatchTopKCrossCoder,
         lr: Optional[float] = None,
         auxk_alpha: float = 1 / 32,
@@ -235,10 +252,20 @@ class BatchTopKCrossCoderTrainer(SAETrainer):
             th.manual_seed(seed)
             th.cuda.manual_seed_all(seed)
 
+        # convert activation dtype to th.dtype
+        if activation_dtype.lower() == "float32":
+            activation_dtype = th.float32
+        elif activation_dtype.lower() == "float16":
+            activation_dtype = th.float16
+        elif activation_dtype.lower() == "bfloat16":
+            activation_dtype = th.bfloat16
+        else:
+            raise ValueError(f"Unsupported activation dtype: {activation_dtype}")
+
         # initialize dictionary
         if pretrained_ae is None:
             self.ae = dict_class(
-                activation_dim, dict_size, num_layers, k, **dict_class_kwargs
+                activation_dtype, activation_dim, dict_size, num_layers, k, **dict_class_kwargs
             )
         else:
             self.ae = pretrained_ae
@@ -431,6 +458,7 @@ class BatchTopKCrossCoderTrainer(SAETrainer):
             "threshold_start_step": self.threshold_start_step,
             "top_k_aux": self.top_k_aux,
             "seed": self.seed,
+            "activation_dtype": dtype_to_str(self.ae.activation_dtype),
             "activation_dim": self.ae.activation_dim,
             "dict_size": self.ae.dict_size,
             "k": self.ae.k.item(),

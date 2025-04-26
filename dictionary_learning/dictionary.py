@@ -170,12 +170,15 @@ class GatedAutoEncoder(Dictionary, nn.Module):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
-        self.decoder_bias = nn.Parameter(th.empty(activation_dim, device=device))
-        self.encoder = nn.Linear(activation_dim, dict_size, bias=False, device=device)
+        self.decoder_bias = nn.Parameter(
+            th.empty(activation_dim, device=device))
+        self.encoder = nn.Linear(
+            activation_dim, dict_size, bias=False, device=device)
         self.r_mag = nn.Parameter(th.empty(dict_size, device=device))
         self.gate_bias = nn.Parameter(th.empty(dict_size, device=device))
         self.mag_bias = nn.Parameter(th.empty(dict_size, device=device))
-        self.decoder = nn.Linear(dict_size, activation_dim, bias=False, device=device)
+        self.decoder = nn.Linear(
+            dict_size, activation_dim, bias=False, device=device)
         if initialization == "default":
             self._reset_parameters()
         else:
@@ -204,7 +207,7 @@ class GatedAutoEncoder(Dictionary, nn.Module):
 
         # gating network
         pi_gate = x_enc + self.gate_bias
-        f_gate = (pi_gate > 0).to(self.encoder.weight.dtype)
+        f_gate = (pi_gate > 0).to(dtype=self.encoder.weight.dtype)
 
         # magnitude network
         pi_mag = self.r_mag.exp() * x_enc + self.mag_bias
@@ -262,9 +265,11 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
         super().__init__()
         self.activation_dim = activation_dim
         self.dict_size = dict_size
-        self.W_enc = nn.Parameter(th.empty(activation_dim, dict_size, device=device))
+        self.W_enc = nn.Parameter(
+            th.empty(activation_dim, dict_size, device=device))
         self.b_enc = nn.Parameter(th.zeros(dict_size, device=device))
-        self.W_dec = nn.Parameter(th.empty(dict_size, activation_dim, device=device))
+        self.W_dec = nn.Parameter(
+            th.empty(dict_size, activation_dim, device=device))
         self.b_dec = nn.Parameter(th.zeros(activation_dim, device=device))
         self.threshold = nn.Parameter(th.zeros(dict_size, device=device))
 
@@ -337,7 +342,8 @@ class JumpReluAutoEncoder(Dictionary, nn.Module):
                 cfg_dict["finetuning_scaling_factor"] == False
             ), "Finetuning scaling factor not supported"
             dict_size, activation_dim = cfg_dict["d_sae"], cfg_dict["d_in"]
-            autoencoder = JumpReluAutoEncoder(activation_dim, dict_size, device=device)
+            autoencoder = JumpReluAutoEncoder(
+                activation_dim, dict_size, device=device)
             autoencoder.load_state_dict(sae.state_dict())
             autoencoder.apply_b_dec_to_input = cfg_dict["apply_b_dec_to_input"]
 
@@ -361,9 +367,9 @@ class AutoEncoderNew(Dictionary, nn.Module):
 
         # initialize encoder and decoder weights
         w = th.randn(activation_dim, dict_size)
-        ## normalize columns of w
+        # normalize columns of w
         w = w / w.norm(dim=0, keepdim=True) * 0.1
-        ## set encoder and decoder weights
+        # set encoder and decoder weights
         self.encoder.weight = nn.Parameter(w.clone().T)
         self.decoder.weight = nn.Parameter(w.clone())
 
@@ -441,7 +447,8 @@ class CrossCoderEncoder(nn.Module):
                 th.empty(num_layers, activation_dim, dict_size)
             )
         if norm_init_scale is not None:
-            weight = weight / weight.norm(dim=1, keepdim=True) * norm_init_scale
+            weight = weight / \
+                weight.norm(dim=1, keepdim=True) * norm_init_scale
         self.weight = nn.Parameter(weight)
         self.bias = nn.Parameter(th.zeros(dict_size))
 
@@ -467,6 +474,7 @@ class CrossCoderEncoder(nn.Module):
         else:
             w = self.weight
             bias = self.bias
+        x = x.to(dtype = self.weight.dtype)  # casting from activation dtype to weight dtype
         f = th.einsum("bld, ldf -> blf", x, w)
         if not return_no_sum:
             return relu(f.sum(dim=1) + bias)
@@ -481,6 +489,7 @@ class CrossCoderDecoder(nn.Module):
 
     def __init__(
         self,
+        activation_dtype: th.dtype,
         activation_dim,
         dict_size,
         num_layers,
@@ -489,6 +498,7 @@ class CrossCoderDecoder(nn.Module):
         init_with_weight: th.Tensor | None = None,
     ):
         super().__init__()
+        self.activation_dtype = activation_dtype
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.num_layers = num_layers
@@ -497,23 +507,24 @@ class CrossCoderDecoder(nn.Module):
             self.weight = nn.Parameter(init_with_weight)
         else:
             if same_init_for_all_layers:
-                weight = init.kaiming_uniform_(th.empty(dict_size, activation_dim))
+                weight = init.kaiming_uniform_(
+                    th.empty(dict_size, activation_dim))
                 weight = weight.repeat(num_layers, 1, 1)
             else:
                 weight = init.kaiming_uniform_(
                     th.empty(num_layers, dict_size, activation_dim)
                 )
             if norm_init_scale is not None:
-                weight = weight / weight.norm(dim=2, keepdim=True) * norm_init_scale
+                weight = weight / \
+                    weight.norm(dim=2, keepdim=True) * norm_init_scale
             self.weight = nn.Parameter(weight)
 
     def forward(
         self,
-        f: th.Tensor,
+        f: th.Tensor,  # f: (batch_size, dict_size)
         select_features: list[int] | None = None,
         add_bias: bool = True,
-    ) -> th.Tensor:  # (batch_size, n_layers, activation_dim)
-        # f: (batch_size, n_layers, dict_size)
+    ) -> th.Tensor:  # x: (batch_size, n_layers, activation_dim)
         """
         Convert features to activations for each layer
 
@@ -529,7 +540,7 @@ class CrossCoderDecoder(nn.Module):
         x = th.einsum("bf, lfd -> bld", f, w)
         if add_bias:
             x += self.bias
-        return x
+        return x.to(dtype = self.activation_dtype)  # casting from weight dtype to activation dtype
 
 
 class LossType(StrEnum):
@@ -578,6 +589,7 @@ class CrossCoder(Dictionary, nn.Module):
 
     def __init__(
         self,
+        activation_dtype: th.dtype,
         activation_dim,
         dict_size,
         num_layers,
@@ -593,6 +605,7 @@ class CrossCoder(Dictionary, nn.Module):
     ):
         """
         Args:
+            activation_dtype: dtype of the activations
             same_init_for_all_layers: if True, initialize all layers with the same vector
             norm_init_scale: if not None, initialize the weights with a norm of this value
             init_with_transpose: if True, initialize the decoder weights with the transpose of the encoder weights
@@ -630,6 +643,7 @@ class CrossCoder(Dictionary, nn.Module):
         else:
             decoder_weight = None
         self.decoder = CrossCoderDecoder(
+            activation_dtype,
             activation_dim,
             dict_size,
             num_decoder_layers,
@@ -716,7 +730,8 @@ class CrossCoder(Dictionary, nn.Module):
             warn(
                 "Cross-coder state dict was saved while torch.compiled was enabled. Fixing..."
             )
-            state_dict = {k.split("_orig_mod.")[1]: v for k, v in state_dict.items()}
+            state_dict = {k.split("_orig_mod.")[
+                1]: v for k, v in state_dict.items()}
         num_layers, activation_dim, dict_size = state_dict["encoder.weight"].shape
         cross_coder = cls(activation_dim, dict_size, num_layers)
         cross_coder.load_state_dict(state_dict)
@@ -729,14 +744,17 @@ class CrossCoder(Dictionary, nn.Module):
         # https://transformer-circuits.pub/2023/monosemantic-features/index.html#appendix-autoencoder-resampling
         # compute loss for each activation
         losses = (
-            (activations - self.forward(activations)).norm(dim=-1).mean(dim=-1).square()
+            (activations - self.forward(activations)
+             ).norm(dim=-1).mean(dim=-1).square()
         )
 
         # sample input to create encoder/decoder weights from
         n_resample = min([deads.sum(), losses.shape[0]])
         print("Resampling", n_resample, "neurons")
-        indices = th.multinomial(losses, num_samples=n_resample, replacement=False)
-        sampled_vecs = activations[indices]  # (n_resample, num_layers, activation_dim)
+        indices = th.multinomial(
+            losses, num_samples=n_resample, replacement=False)
+        # (n_resample, num_layers, activation_dim)
+        sampled_vecs = activations[indices]
 
         # get norm of the living neurons
         # encoder.weight: (num_layers, activation_dim, dict_size)
@@ -759,12 +777,13 @@ class CrossCoder(Dictionary, nn.Module):
 
 
 class BatchTopKCrossCoder(CrossCoder):
-    def __init__(self, activation_dim, dict_size, num_layers, k: int | th.Tensor = 100, *args, **kwargs):
-        super().__init__(activation_dim, dict_size, num_layers, *args, **kwargs)
+    def __init__(self, activation_dtype: th.dtype, activation_dim, dict_size, num_layers, k: int | th.Tensor = 100, *args, **kwargs):
+        super().__init__(activation_dtype, activation_dim,
+                         dict_size, num_layers, *args, **kwargs)
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.num_layers = num_layers
-
+        self.activation_dtype = activation_dtype
         if not isinstance(k, th.Tensor):
             k = th.tensor(k, dtype=th.int)
 
@@ -852,9 +871,11 @@ class BatchTopKCrossCoder(CrossCoder):
             warn(
                 "Cross-coder state dict was saved while torch.compiled was enabled. Fixing..."
             )
-            state_dict = {k.split("_orig_mod.")[1]: v for k, v in state_dict.items()}
+            state_dict = {k.split("_orig_mod.")[
+                1]: v for k, v in state_dict.items()}
         num_layers, activation_dim, dict_size = state_dict["encoder.weight"].shape
-        cross_coder = cls(activation_dim, dict_size, num_layers, k=state_dict["k"])
+        cross_coder = cls(activation_dim, dict_size,
+                          num_layers, k=state_dict["k"])
         cross_coder.load_state_dict(state_dict)
 
         if device is not None:
