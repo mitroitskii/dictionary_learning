@@ -489,10 +489,10 @@ class CrossCoderDecoder(nn.Module):
 
     def __init__(
         self,
-        activation_dtype: th.dtype,
         activation_dim,
         dict_size,
         num_layers,
+        activation_dtype: th.dtype | None = None,
         same_init_for_all_layers: bool = False,
         norm_init_scale: float | None = None,
         init_with_weight: th.Tensor | None = None,
@@ -540,7 +540,9 @@ class CrossCoderDecoder(nn.Module):
         x = th.einsum("bf, lfd -> bld", f, w)
         if add_bias:
             x += self.bias
-        return x.to(dtype = self.activation_dtype)  # casting from weight dtype to activation dtype
+        if self.activation_dtype is not None:
+            x = x.to(dtype=self.activation_dtype)  # casting from weight dtype to activation dtype
+        return x
 
 
 class LossType(StrEnum):
@@ -589,10 +591,10 @@ class CrossCoder(Dictionary, nn.Module):
 
     def __init__(
         self,
-        activation_dtype: th.dtype,
         activation_dim,
         dict_size,
         num_layers,
+        activation_dtype: th.dtype | None = None,
         same_init_for_all_layers=False,
         norm_init_scale: float | None = None,  # neel's default: 0.005
         init_with_transpose=True,
@@ -620,6 +622,7 @@ class CrossCoder(Dictionary, nn.Module):
             num_decoder_layers = num_layers
 
         self.activation_dim = activation_dim
+        self.activation_dtype = activation_dtype
         self.dict_size = dict_size
         self.num_layers = num_layers
         self.latent_processor = latent_processor
@@ -643,10 +646,10 @@ class CrossCoder(Dictionary, nn.Module):
         else:
             decoder_weight = None
         self.decoder = CrossCoderDecoder(
-            activation_dtype,
             activation_dim,
             dict_size,
             num_decoder_layers,
+            activation_dtype=activation_dtype,
             same_init_for_all_layers=same_init_for_all_layers,
             init_with_weight=decoder_weight,
             norm_init_scale=norm_init_scale,
@@ -777,9 +780,9 @@ class CrossCoder(Dictionary, nn.Module):
 
 
 class BatchTopKCrossCoder(CrossCoder):
-    def __init__(self, activation_dtype: th.dtype, activation_dim, dict_size, num_layers, k: int | th.Tensor = 100, *args, **kwargs):
-        super().__init__(activation_dtype, activation_dim,
-                         dict_size, num_layers, *args, **kwargs)
+    def __init__(self, activation_dim, dict_size, num_layers, activation_dtype: th.dtype | None = None, k: int | th.Tensor = 100, *args, **kwargs):
+        super().__init__(activation_dim,
+                         dict_size, num_layers, activation_dtype=activation_dtype, *args, **kwargs)
         self.activation_dim = activation_dim
         self.dict_size = dict_size
         self.num_layers = num_layers
